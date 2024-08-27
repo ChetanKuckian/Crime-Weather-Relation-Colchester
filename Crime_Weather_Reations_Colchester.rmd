@@ -1,0 +1,854 @@
+---
+title: <center>Decoding Crime Patterns and Case Outcomes in Colchester</center>
+author: <center>Chetan Kuckian</center>
+output:
+  html_document: default
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE,message = FALSE)
+```
+
+
+<center><h2>Introduction</h2></center>
+
+&nbsp;
+
+Crime and Weather are two seemingly disparate phenomena. However, recent studies suggest a potential link between the two, with weather conditions influencing crime rates in various ways. This report delves into the relationship between crime and weather in Colchester, UK, utilizing data visualization techniques to uncover any patterns or correlations.
+
+Our investigation aims to answer these key questions:
+
+ - Do specific weather conditions, such as temperature, precipitation, or visibility, coincide with increased crime activity in Colchester? 
+ - Are certain crime types more susceptible to weather fluctuations than others? 
+ - Is the conviction rate good enough for public to feel safe? 
+ 
+Through interactive visualizations and data analysis, we will explore these questions and provide valuable insights for policymakers, law enforcement agencies, and the colchester community at large. By understanding the potential influence of weather on crime patterns, we can work towards proactive measures to mitigate crime risk and create a safer environment for everyone.
+
+<center><h2>Different Crimes in the City</h2></center>
+
+&nbsp;
+
+We will start by looking at the number of different crimes that happened throughout the year 2023 in Colchester.
+
+```{r}
+# Load all the necessary libraries
+listofpackages <-
+  c("ggplot2",
+    "dplyr",
+    "lubridate",
+    "plotly",
+    "crosstalk",
+    "corrplot",
+    "tidyverse",
+    "DT",
+    "leaflet")
+
+for (j in listofpackages) {
+  if (sum(installed.packages()[, 1] == j) == 0) {
+    install.packages(j)
+  }
+  library(j, character.only = T)
+}
+```
+
+```{r}
+# Uncomment if running manually
+# setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+# Reading crime input file
+colchester_crimes <- read.csv("crime23.csv")
+```
+
+```{r}
+
+colchester_crime_counts <- colchester_crimes %>%
+  mutate(category = fct_rev(fct_infreq(category)))
+
+ggplotly(ggplot(colchester_crime_counts,aes(x=category)) +
+  geom_bar(fill = "darkorange2") +
+  coord_flip() +
+  theme_classic() +
+  xlab("Crime Category") +
+  ylab("Number of Crimes") +
+  ggtitle("Registered Cases of Different Crimes in 2023") +
+  theme(plot.title = element_text(hjust = 0.5))
+)
+```
+
+The crime category with the most incidents in 2023 is **Violent Crimes** followed by **Anti Social Behaviour** and **Criminal Damage Arson**.
+
+Possession of Weapons and Thefts from Person have a relatively low number of incidents happening compared to the top categories.
+
+Looking at the data we can see that some of these crimes fall under same category. For e.g. **Shoplifting**, **vehicle-crime**, **bicycle-theft** and **theft-from-the-person** all fall under a main category of **Theft**. So we will club these crimes into 4 Main Categories namely: **Theft**, **Property Damage**, **Violent Crime** and **Other**.
+
+```{r}
+# Function to categorize crimes
+categorize_crime <- function(category) {
+  if (grepl("theft|shoplifting|vehicle", category, ignore.case = TRUE)) {
+    "Theft"  # Includes bicycle theft, other theft, shoplifting, vehicle crime
+  } else if (grepl("burglary|arson|criminal damage", category, ignore.case = TRUE)) {
+    "Property Damage"  # Includes burglary, criminal damage, arson (assuming it involves damage)
+  } else if (grepl("robbery|violent", category, ignore.case = TRUE)) {
+    "Violent Crime"  # Includes robbery and violent crime
+  } else {
+    "Other"  # For remaining categories (anti-social behaviour, drugs, public order, etc.)
+  }
+}
+
+colchester_crimes$crime_category <- sapply(colchester_crimes$category,categorize_crime)
+```
+
+We can look at the different types of crime coming in each of our Main Categories below:
+
+```{r}
+crime_mappings <- unique(colchester_crimes[,c("category","crime_category")])
+
+crime_mappings <- SharedData$new(crime_mappings)
+
+filters <- filter_checkbox(
+  id = "crime_category",
+  label = "Crime Category",
+  sharedData = crime_mappings,
+  group = ~crime_category,
+  # multiple = FALSE
+)
+
+table <- crime_mappings %>% 
+  DT::datatable(
+    extensions = c( "Buttons", "Scroller"),
+    rownames = FALSE,
+    style = "bootstrap",
+    class = "compact",
+    width = "100%",
+    options = list(
+      dom = "Blrtip",
+      deferRender = TRUE,
+      scrollY = 300,
+      scroller = TRUE,
+      columnDefs = list(
+        list(
+          visible = TRUE,
+          targets = c(0, 1)
+        )
+      ), 
+      buttons = list("csv", "excel")
+    ),
+    colnames = c(
+      "Crime Category" = "category",
+      "Consolidated Crime Category" = "crime_category"
+    )
+  )
+
+bscols(filters,table)
+```
+
+
+We can now see the distribution of our newly created Consolidated Crime Categories. 
+
+```{r}
+consolidated_crime_count_df <- colchester_crimes %>%
+  group_by(crime_category) %>%
+  summarise(count = n())
+
+consolidated_crime_count_df$percentage <- consolidated_crime_count_df$count / sum(consolidated_crime_count_df$count) * 100
+
+# Create pie chart
+
+ggplot(consolidated_crime_count_df, aes(x = "", y = count, fill = crime_category)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(round(percentage), "%")), position = position_stack(vjust = 0.5), color = "white", size = 5) +
+  coord_polar("y", start = 0) +
+  theme_classic() +
+  theme(axis.text = element_blank(),  # Hide both x and y-axis labels
+        axis.ticks = element_blank(),  # Hide both x and y-axis ticks
+        axis.title = element_blank(),
+        axis.line = element_line(color = "white") )+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_fill_brewer(palette = "Dark2") +
+  labs(title = "Distribution of Consolidated Crime Categories")
+```
+
+We now observe that out of all the crimes, **violent crimes** take the largest portion of **40%** and **26%** of the crimes were **Theft** related.
+
+A few questions comes to the mind after looking at the plots.
+- Are there specific areas in Colchester with higher concentrations of certain types of crimes?
+- Are there any seasonal trends in crime rates throughout the year 2023?
+
+We will dive into this one by one to understand the reported criminal activites.
+
+<center><h2>Location based Crimes</h2></center>
+&nbsp;
+
+Do you stay in Colchester? Have you or someone you know been a victim to these crimes here. In the below map you can check the number of crime that happened near your street in 2023. Or you might be planning to visit Colchester and are interested in looking at the areas with most crimes by each category, so that you can avoid going to these places alone, we can do that using the table below.
+
+```{r}
+# Function to calculate the distance between two points using Haversine formula
+haversine_distance <- function(lat1, lon1, lat2, lon2) {
+  # Radius of the Earth in miles
+  R <- 3961 
+  
+  # Convert latitude and longitude from degrees to radians
+  lat1_rad <- degrees_to_radians(lat1)
+  lon1_rad <- degrees_to_radians(lon1)
+  lat2_rad <- degrees_to_radians(lat2)
+  lon2_rad <- degrees_to_radians(lon2)
+  
+  # Haversine formula
+  dlon <- lon2_rad - lon1_rad
+  dlat <- lat2_rad - lat1_rad
+  a <- sin(dlat/2)^2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon/2)^2
+  c <- 2 * atan2(sqrt(a), sqrt(1-a))
+  distance <- R * c
+  
+  return(distance)
+}
+
+# Function to convert degrees to radians
+degrees_to_radians <- function(degrees) {
+  return(degrees * pi / 180)
+}
+
+
+# Set the mid point for Colchester looking at the google maps
+
+lat_mid <- 51.8855688
+long_mid <- 0.9002293
+
+# Calculate distances from the midpoint
+colchester_crimes$centre_dist <- haversine_distance(lat_mid, long_mid, colchester_crimes$lat, colchester_crimes$long)
+
+```
+
+
+```{r}
+# Function to categorize locations
+categorize_location <- function(lat, long, lat_mid, long_mid,centre_dist) {
+  # Calculate the distance from the midpoint for latitude and longitude
+  lat_dist <- lat - lat_mid
+  long_dist <- long - long_mid
+  
+  # Slopes of the lines passing through the midpoint
+  slope_up <- 1
+  slope_down <- -1
+  
+  # Calculate the latitude values on the lines with slopes 1 and -1 for the given longitude
+  lat_slope_up <- slope_up * (long - long_mid) + lat_mid
+  lat_slope_down <- slope_down * (long - long_mid) + lat_mid
+  
+  # Determine the category based on the position relative to the lines
+  if (centre_dist <= 0.3) {
+    return("City Center")
+  }
+  else if (long_dist >= 0) {
+    if  (lat > lat_mid && ( lat <= lat_slope_up)) {
+      return("East")
+    } else if (lat > lat_mid && lat >= lat_slope_up) {
+      return("North")
+    }
+    else if (lat < lat_mid && lat <= lat_slope_down) {
+      return("South")
+    }
+    else if (lat < lat_mid && lat >= lat_slope_down) {
+      return("East")
+    }
+  } else {
+    if  (lat > lat_mid && ( lat >= lat_slope_down)) {
+      return("North")
+    } else if (lat > lat_mid && lat <= lat_slope_down) {
+      return("West")
+    }
+    else if (lat < lat_mid && lat <= lat_slope_up) {
+      return("South")
+    }
+    else if (lat < lat_mid && lat >= lat_slope_up) {
+      return("West")
+    }
+  }
+}
+
+colchester_crimes$place_category <- mapply(categorize_location, colchester_crimes$lat, colchester_crimes$long, lat_mid, long_mid,colchester_crimes$centre_dist)
+
+```
+
+
+
+```{r}
+crime_counts_shared_df <- colchester_crimes %>%
+  group_by(lat,long,crime_category,place_category,street_name) %>%
+  summarise(count_of_crimes = n())
+
+
+crime_counts_shared_df <- SharedData$new(crime_counts_shared_df)
+
+filters <- bscols(
+  filter_select(
+    id = "crime_category",
+    label = "Crime Category",
+    sharedData = crime_counts_shared_df,
+    group = ~crime_category
+  ),
+  filter_select(
+  id = "place_category",
+  label = "Location Category",
+  sharedData = crime_counts_shared_df,
+  group = ~place_category
+),
+  filter_select(
+  id = "street_name",
+  label = "Street Name",
+  sharedData = crime_counts_shared_df,
+  group = ~street_name
+))
+
+
+pal <- colorFactor(c("slateblue", "darkorange3","deeppink3","seagreen4"), domain = c("Theft", "Property Damage","Violent Crime","Other"),ordered = TRUE)  
+
+crime_map <- crime_counts_shared_df %>% 
+  leaflet() %>%
+  addTiles() %>%
+  setView(lng = 0.9083, lat = 51.8850,zoom=13)  %>%
+  addCircleMarkers(
+        lng = ~long,
+        lat = ~lat,
+        radius = 5,
+        fillColor = ~pal(crime_category),
+        stroke = FALSE, fillOpacity = 0.5,
+        popup = ~paste0(
+      "<h3>", street_name, "</h3>",
+      "<table style='width:100%'>",
+      "<tr>",
+      "<th>Crime Category</th>",
+      "<th>", crime_category, "</th>",
+      "</tr>",
+      "<tr>",
+      "<tr>",
+      "<th>Crime Count</th>",
+      "<th>", count_of_crimes, "</th>",
+      "</tr>"
+    )
+        ) %>%
+  addMeasure()
+```
+
+```{r}
+crime_table <- crime_counts_shared_df %>% 
+  DT::datatable(
+    filter = "top", 
+    extensions = c(
+      "Buttons", "Scroller"),
+    rownames = FALSE,
+    style = "bootstrap",
+    class = "compact",
+    width = "100%",
+    options = list(
+      dom = "Blrtip",
+      deferRender = TRUE,
+      scrollY = 300,
+      scroller = TRUE,
+      columnDefs = list(
+        list(
+          visible = FALSE,
+          targets = c(0, 1)
+        )
+      ), 
+      buttons = list(("colvis"), "csv", "excel")
+    ),
+    colnames = c(
+      "Latitude" = "lat",
+      "Longitude" ="long",
+      "Street Name" = "street_name",
+      "Crime Category" = "crime_category",
+      "Crime Count" = "count_of_crimes"
+    )
+  )
+```
+
+```{r}
+bscols(filters,crime_map,crime_table, widths = c(12,5,7))
+```
+
+
+We can observe from the maps the that the **eastern** and **northern** part of colchester see a **increased crime rate** as compared to the **southern** parts.
+We can also analyze the top street names for different crime types from the given table.
+**Violent** crimes are more prevalent **On or near Balkerne Gardens and Church Street**.
+**Thefts** are more common **On or near Shopping Street and St Nicholas Street**.
+
+We can also further visualize which crime category is more prevalent in which part of the city.
+
+```{r}
+crime_count_per_region_category <- colchester_crimes %>%
+  group_by(place_category,crime_category) %>%
+  summarise(crime_count = n())
+
+ggplotly(ggplot(crime_count_per_region_category, aes(x = place_category, y = crime_count, fill = crime_category)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Crime Counts by Location Category and Crime Category",
+       x = "Location Category",
+       y = "Crime Count",
+       fill = "Crime Category") +
+    scale_fill_brewer(palette = "Dark2") +
+  theme_classic() +
+    theme(plot.title = element_text(hjust = 0.5)))
+```
+
+**City Center** definitely saw the maximum number of **Thefts** happening across all location. While **Violent** crimes were registered **throughout the town**, the number of crimes in South and West of Colchester saw  very less crimes being committed or registered than the other parts. We also see that East of Colchester is a prime location form almost all the crime types.
+
+<center><h2>Weather in Colchester</h2></center>
+&nbsp;
+
+Now, we will move ahead to find any patterns between weather changes and the registered crimes in this city in 2023, but before we do that let's look at the overall weather in Colchester.
+
+Colchester experiences a maritime temperate climate with mild winters and cool summers, characterized by relatively stable weather patterns throughout the year. We can look at the year round trend for the different weather parameters below.
+
+```{r}
+# Reading Weather input file
+
+colchester_weather <- read.csv("temp2023.csv")
+```
+
+```{r}
+
+# Define LOESS smoothing
+
+loess_smooth_avg <- stat_smooth(aes(y = colchester_weather$TemperatureCAvg, color = "Average"), method = "loess", se = FALSE)
+loess_smooth_max <- stat_smooth(aes(y = colchester_weather$TemperatureCMax, color = "Maximum"), method = "loess", se = FALSE)
+loess_smooth_min <- stat_smooth(aes(y = colchester_weather$TemperatureCMin, color = "Minimum"), method = "loess", se = FALSE)
+
+# Create time series plot with LOESS smoothing
+
+ggplot(colchester_weather, aes(x = as.Date(Date))) +
+  geom_line(aes(y = TemperatureCAvg, color = "Average"), linetype = "solid") +
+  geom_line(aes(y = TemperatureCMax, color = "Maximum"), linetype = "solid") +
+  geom_line(aes(y = TemperatureCMin, color = "Minimum"), linetype = "solid") +
+  loess_smooth_avg +  # Add LOESS smoothing for average
+  loess_smooth_max +  # Add LOESS smoothing for maximum
+  loess_smooth_min +  # Add LOESS smoothing for minimum
+  labs(title = "Daily Temperature in Colchester (Average, Max, Min) with LOESS Smoothing",
+       x = "Date",
+       y = "Temperature (°C)") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+We can observe that the weather in colchester in mostly on the cooler to moderate end. The months of July to September has warmer temperatures in comparison to the entire year.
+
+```{r}
+# Density plot for PresslevHp
+
+ggplotly(ggplot(colchester_weather, aes(x = PresslevHp)) +
+  geom_density(fill = "darkseagreen4", color = "black") +
+  labs(title = "Density Plot of PresslevHp",
+       x = "PresslevHp",
+       y = "Density") +
+  theme_classic() +
+    theme(plot.title = element_text(hjust = 0.5)))
+```
+
+Even the sea pressure mainly stays around **1011 hPa** to **1020 hPa** through out the year. 
+
+```{r}
+# Categorize TemperatureCAvg into Cold, Moderate or Warm
+
+categorize_temp <- function(temp) {
+  if (temp < 10) {
+    return("Cold")
+  } else if (temp < 15) {
+    return("Moderate")
+  } else {
+    return("Warm")
+  }
+}
+
+colchester_weather$temperature_category <- sapply(colchester_weather$TemperatureCAvg,categorize_temp)
+```
+
+```{r}
+# Violin plot containing temperature_category and WindkmhInt
+
+ggplotly(ggplot(colchester_weather, aes(x = temperature_category, y = WindkmhInt, fill = temperature_category)) +
+  geom_violin() +
+  labs(title = "Violin Plot of Wind Speed by Temperature Category",
+       x = "Temperature Category",
+       y = "Wind Speed (km/h)",
+       fill = "Temperature Category") +
+    scale_fill_brewer(palette = "Set2") +
+  theme_classic() +
+    theme(plot.title = element_text(hjust = 0.5)))
+```
+The violin plot displays the distribution of wind speed for three temperature categories: **Cold**, **Moderate**, and **Warm**. The wider areas of the violin shapes represent a higher density of data points at those wind speeds. We can infer from the plot that the wind speed during moderate temperature days are a bit on the higher end as compared to Warmer and Colder days. 
+
+
+```{r}
+temp_wind_presslev_data <- colchester_weather[,c("WindkmhInt", "PresslevHp","temperature_category")]
+
+temp_wind_presslev_data <- SharedData$new(temp_wind_presslev_data)
+
+filters <- bscols(filter_select(
+  id = "temperature_category",
+  label = "Temperature Category",
+  sharedData = temp_wind_presslev_data,
+  group = ~temperature_category,
+  multiple = FALSE
+))
+
+# Scatter plot for WindkmhInt vs PresslevHp
+
+plot <- ggplotly(ggplot(temp_wind_presslev_data, aes(x = WindkmhInt, y = PresslevHp)) +
+  geom_point( aes(color= temperature_category)) +
+  scale_x_continuous(breaks = seq(floor(min(colchester_weather$WindkmhInt,na.rm = TRUE)),ceiling(max(colchester_weather$WindkmhInt,na.rm = TRUE)) , by = 5)) +
+    
+    labs(
+    x = "Wind Speed (km/h)",
+    y = "Sea Level Pressure (hPa)",
+    title = "Scatter Plot of Wind Speed by Sea Level Pressure",
+    color = "Temperature Category"
+  ) +
+  scale_color_brewer(palette = "Set2") +
+    theme_classic() +
+    theme(plot.title = element_text(hjust = 0.5))
+  ) 
+
+bscols(filters,plot,widths = c(12,12))
+```
+
+There appears to be a **weak negative correlation** between **temperature** and **sea level pressure**. This means that as temperature increases, sea level pressure tends to decrease. However, the scatter of points indicates that the relationship is not very strong. It is also observed that there is a stronger negative correlation between these two during the warmer days when compare to to Colder or Moderate temperature days which show a spread pattern for similar wind speeds.
+
+<center><h2>Relations between Weather and Crime</h2></center>
+&nbsp;
+
+Since our crime data is on monthly level, we would require to roll up our weather information on monthly level to try drawing correlation inferences.
+
+```{r}
+# Converting Weather data to monthly level
+
+monthly_temperature_data <- colchester_weather %>%
+  mutate(month = month(as.Date(colchester_weather$Date, "%Y-%m-%d"), label=TRUE)) %>%
+  group_by(month) %>%
+  summarize(
+    TemperatureCAvg = mean(TemperatureCAvg, na.rm = TRUE),
+    TemperatureCMax = max(TemperatureCMax),
+    TemperatureCMin = min (TemperatureCMin),
+    TdAvgC = mean(TdAvgC, na.rm = TRUE),
+    HrAvg = median(HrAvg, na.rm = TRUE),
+    WindkmhInt = median(WindkmhInt, na.rm = TRUE),
+    WindkmhGust = median(WindkmhGust, na.rm = TRUE),
+    PresslevHp = median(PresslevHp, na.rm = TRUE),
+    Precmm = median(Precmm, na.rm = TRUE),
+    TotClOct = median(TotClOct, na.rm = TRUE),
+    VisKm = mean(VisKm, na.rm = TRUE
+    )
+  )
+
+# Joining Crime and Weather dataset
+
+crime_final_data <-
+  colchester_crimes %>%
+  mutate(month = month(as.Date(
+    paste(colchester_crimes$date, "01", sep = "-")
+  ), label = TRUE)) %>%
+  left_join(monthly_temperature_data, by = "month")
+```
+
+```{r fig.show="hold"}
+correlation_related_data <- crime_final_data %>%
+  group_by(crime_category,TemperatureCAvg,TemperatureCMax,TemperatureCMin,TdAvgC,HrAvg,WindkmhInt,WindkmhGust,PresslevHp,Precmm,TotClOct,VisKm) %>%
+  summarise(count = n())
+
+
+numeric_cols <- sapply(correlation_related_data, is.numeric) 
+numeric_df <- correlation_related_data[, numeric_cols]
+
+# Calculate correlation matrix
+correlation_matrix <- cor(numeric_df)
+
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+
+
+create_corr_plot <- function(data, crime_category) {
+  filtered_data <- data[data$crime_category == crime_category, ]
+  numeric_cols <- names(filtered_data)[sapply(filtered_data, is.numeric)]
+  corr_matrix <- cor(filtered_data[, numeric_cols])
+  
+  return   (
+    corrplot(corr_matrix, method="color", col=col(200),  
+         type="upper",  
+         addCoef.col = "black",
+         tl.col="black",
+         sig.level = 0.01, insig = "blank", 
+         number.font = 0.1,
+         number.cex= 7/ncol(filtered_data),
+          tl.cex= 7/ncol(filtered_data),
+         diag=FALSE ,
+         )
+    
+  ) +
+    theme_classic()
+}
+
+for (crime in unique(correlation_related_data$crime_category)) {
+  create_corr_plot(correlation_related_data,crime)
+  mtext(paste(crime),line=2,side=2)
+}
+```
+
+The correlation above shows us that there is a **positive correlation** between **Temperature** and Two Crime Categories (**Violent Crime & Other**) while Property Damage and Theft have a negative correlation indicating that the probability of them happening is more in lower temperatures.
+
+The same can be observed for visibility in kilometers column as well.
+
+```{r}
+# Box plot containing crime_category and TemperatureCAvg
+
+ggplotly(ggplot(crime_final_data, aes(x = crime_category, y = TemperatureCAvg, fill = crime_category)) +
+  geom_boxplot() +
+  labs(x = "Crime Category", y = "Average Monthly Temperature (°C)", title = "Box Plot of Average Monthly Temperature by Crime Category") +
+  theme_classic() +
+  scale_fill_brewer(palette = "Dark2") +
+    theme(plot.title = element_text(hjust = 0.5)))
+```
+
+We can observe from this that majority of the property damages and theft have happened at a median temperature of **8&deg;C**, where as violent crimes have occurred with a median temperature of **11.53&deg;C**.
+
+
+The histogram below of visibility and crime counts for each crime category shows us that **most of the crimes are happening during low visibility** and when the visibility is high the count of registered crimes is very less in comparison. This suggests that people should be very alert during the times when the overall visibility is low in the area.
+
+
+```{r}
+# Histogram of visibilty
+
+ggplotly(ggplot(crime_final_data, aes(x = VisKm, fill = crime_category)) +
+  geom_histogram(binwidth = 0.7, position = "dodge", alpha = 0.7) +
+    labs(x = "Visibility (km)", 
+         y = "Count", 
+         title = "Histogram of Visibility by Crime Category") +
+  theme_classic() +
+  facet_wrap(~crime_category)+
+  scale_fill_brewer(palette = "Dark2") +
+    theme(plot.title = element_text(hjust = 0.5))
+)
+```
+
+Since our weather data was rolled up to monthly level we tend to lose a trends like number of days with heavy or moderate precipitation in a month. To check if there is any correlation between these trends and crime count, we will create new metric column based on precipitation values and try visualizing them.
+
+
+```{r}
+light_threshold <- 1
+moderate_threshold <- 2.5
+heavy_threshold <- 7.5
+
+# Create a function to categorize precipitation
+
+categorize_precipitation <- function(precip) {
+  if (precip == 0 | is.na(precip)) {
+    return("None")
+  } else if (precip < light_threshold) {
+    return("Light")
+  } else if (precip < moderate_threshold) {
+    return("Moderate")
+  } else {
+    return("Heavy")
+  }
+}
+
+colchester_weather$precmm_category <- sapply(colchester_weather$Precmm,categorize_precipitation)
+```
+
+
+```{r}
+# Getting number of days for each of the Precipitation Category
+
+monthly_precmm_category_counts <- colchester_weather %>%
+  mutate(month = month(as.Date(colchester_weather$Date, "%Y-%m-%d"), label=TRUE)) %>%
+  count(month, precmm_category) %>%
+  pivot_wider(names_from = precmm_category, values_from = n, values_fill = 0)
+
+  
+  monthly_precmm_category_corr_data <-
+  crime_final_data %>%
+  select(crime_category,month) %>%
+  group_by(crime_category,month) %>%
+  summarise(crime_counts = n()) %>%
+  left_join(monthly_precmm_category_counts, by = "month")
+
+```
+
+
+```{r fig.width=12}
+# Bar plot for Heavy and Moderate Precipitation number of days in given months
+
+ggplot(monthly_precmm_category_corr_data, aes(x = month, y = crime_counts,fill=Heavy)) +
+  geom_bar(stat = "identity") +
+    facet_wrap(~crime_category, nrow = 1) +
+    labs(
+     x = "Month",
+    y = "Crime Count",
+    title = "Month vs Crime Count based on Days with Heavy Precipitation"
+  ) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(monthly_precmm_category_corr_data, aes(x = month, y = crime_counts,fill=Moderate)) +
+  geom_bar(stat = "identity") +
+    facet_wrap(~crime_category,nrow = 1) +
+    labs(
+    x = "Month",
+    y = "Crime Count",
+    title = "Month vs Crime Count based on Days with Moderate Precipitation"
+  ) + 
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+The above plot shows us that the number of days with **moderate precipitation** has a correlation with the crime counts for **Property Damage**. The number of property damage crimes decreases with increase in the moderate precipitation days in the month.
+
+Similarly **Theft** shows a correlation with number of **Heavy precipitation days**. The crime count for Theft increases with increase in count of Heavy Precipitation days in the month.
+
+It is also observed that, there is no correlation of precipitation days with the crime counts for violent crime or Other crimes.
+
+<center><h2>Handling of Registered Cases</h2></center>
+&nbsp;
+
+After the crime occurs, police plays a big part in providing the sense of safety and security to the people in the area. This can be judged by the number of cases that have been resolved once they were reported.
+
+
+```{r}
+# Categorize Outcome of the crimes
+
+categorize_outcome <- function(status) {
+  if (grepl("no further|not in the public interest|no suspect|Unable to prosecute suspect", status, ignore.case = TRUE)) {
+    "Case Closed (No Action)"
+  } else if (grepl("resolution|caution|charged", status, ignore.case = TRUE)) {
+    "Case Closed (Action)"
+  } else if (grepl("investigation|awaiting", status, ignore.case = TRUE)) {
+    "Ongoing Investigation"
+  } else {
+    "Other"
+  }
+}
+
+crime_final_data$outcome_category <- sapply(crime_final_data$outcome_status,categorize_outcome)
+```
+
+```{r fig.width= 10}
+
+place_outcome_crime_count_df <- crime_final_data %>%
+  group_by(place_category) %>%
+  mutate(crime_counts_by_area = n()) %>%
+  ungroup() %>%
+  group_by(place_category,outcome_category,crime_counts_by_area) %>%
+  summarize(outcome_count = n(),outcome_percentage = mean(n()*100/crime_counts_by_area))
+
+
+place_outcome_crime_count_df <- SharedData$new(place_outcome_crime_count_df)
+
+filters <- bscols(
+  
+  filter_select(
+  id = "place_category",
+  label = "Location Category",
+  sharedData = place_outcome_crime_count_df,
+  group = ~place_category
+),
+  filter_select(
+  id = "outcome_category",
+  label = "Outcome Category",
+  sharedData = place_outcome_crime_count_df,
+  group = ~outcome_category
+))
+
+# Bar Plot of outcome_category, outcome_percentage and place_category
+
+plot <- ggplotly(ggplot(place_outcome_crime_count_df, aes(x = outcome_category, y = outcome_percentage, fill= place_category)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Category", y = "Percentage (%)",
+       title = "Case Outcome Percentage by each Location Category") +
+  scale_y_continuous(labels = scales::percent) +
+    theme_classic() +
+    scale_fill_brewer(palette = "Accent") +
+    theme(plot.title = element_text(hjust = 0.5))
+)
+
+bscols(filters,plot,widths = c(12,12))
+```
+
+From the visual we can see that out of the reported cases very few cases have been closed with some action. Most of the cases have been closed without any appropriate action being taken.
+
+While the South region has an overall less crime count when compared to the other regions but it also has the lowest case close with some action percentage.
+
+Just glancing at the number, we might believe that the police in Colchester are not that effective, but there are a lot of different things that affect the outcome of a case.
+
+We can deep dive into why these Outcomes have been with No Action.
+
+```{r fig.width=10}
+data <-  crime_final_data %>%
+  group_by(month,outcome_category,outcome_status,crime_category) %>%
+  summarise(n = n())
+
+data <- SharedData$new(data)
+
+b <- bscols(
+  filter_checkbox(
+  id = "outcome_category",
+  label = "Outcome Category",
+  sharedData = data,
+  group = ~outcome_category,
+)
+)
+
+distinct_colors <- c("dodgerblue3", "#E31A1C", # red
+  "green4",
+  "black", "gold1", "#FB9A99", # lt pink
+  "#CAB2D6", # lt purple
+  "#FDBF6F", # lt orange
+  "gray70",
+  "maroon",  "steelblue4",
+  "darkturquoise", "yellow4","brown")  # Lime, Pink, Olive, Brown, Beige
+
+
+g <- ggplotly(ggplot(data, aes(x = month, y = n,color=outcome_status)) +
+  geom_point() +
+  labs(title = "Outcome Status Count per Month per Crime Category",
+       x = "Month",
+       y = "Crime Count") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), title = element_text(hjust = 0.5)) + 
+    facet_wrap(~crime_category)+
+    scale_colour_manual(values = distinct_colors)
+  )
+
+bscols(b,g,widths = c(2,10))
+```
+
+
+
+When we look at the detailed outcomes of the cases, we see that majority of the cases have been closed because no suspect was identified.
+The second most problem faced by the police is that they cannot prosecute the suspect, now this might be due to lack of evidences or the suspect died or became mentally unfit to stand trial.
+
+While the count of other outcome sub types like "Further action is not in the public interest" or Formal action is not in the public interest might be low, they usually occur when it is a minor offense or If the suspect is a child, mentally ill, or has other vulnerabilities.
+
+<center><h2>Conclusion</h2></center>
+&nbsp;
+
+This report has explored the relationship between crime and weather in Colchester, UK, for the year 2023. By analyzing crime data and weather patterns, we found several key insights:
+
+ - Violent crimes were the most prevalent, followed by thefts.
+ - Crime rates were higher in the eastern and northern parts of Colchester.
+ -- There appears to be a weak positive correlation between temperature and violent crimes, while property damage and theft showed a negative correlation.
+ - Lower visibility conditions coincided with higher crime rates.
+ - Moderate precipitation days correlated with fewer property damage incidents, while heavy precipitation days correlated with increased thefts.
+
+These findings suggest a potential link between weather conditions and crime patterns.  However, further research with more granular data (e.g., daily crime and weather data) would be necessary to establish stronger causal relationships. Additionally, the low case resolution rate highlights the need to explore ways to improve police effectiveness in Colchester.
+
+This report provides valuable information for policymakers, law enforcement agencies, and the Colchester community. By understanding the potential influence of weather on crime and the challenges faced by law enforcement, this data can inform strategies to enhance public safety and prevent crime in Colchester.
+
+
+<center><h2>References</h2></center>
+&nbsp;
+
+ - [R Color Palette](https://www.nceas.ucsb.edu/sites/default/files/2020-04/colorPaletteCheatsheet.pdf)
+  - [Creating tables using DT Library](https://clarewest.github.io/blog/post/making-tables-shiny/)
+ - [Google Maps Colchester Center](https://www.google.com/maps/place/Colchester+Town/@51.8883795,0.8939142,15.81z/data=!4m15!1m8!3m7!1s0x47d8e24e12f62f05:0x175d5f1c455091de!2sColchester!3b1!8m2!3d51.895927!4d0.891874!16zL20vMDFuNG5k!3m5!1s0x47d904f944cb79a5:0x205cf4f7132f1cec!8m2!3d51.8864528!4d0.9042913!16zL20vMGQ3c3lt?entry=ttu
+)
+ - [Using Crosstalk and adding html widgets in r markdown html file](https://github.com/matt-dray/earl18-crosstalk)
+ - [Interactive plots with ploty in R, Youtube Video](https://www.youtube.com/watch?v=YRngup6NR9s)
+ - [Haversine Distance Calculation Logic](https://www.r-bloggers.com/2016/08/great-circle-distance-calculations-in-r/)
